@@ -7,12 +7,16 @@ Ask it a building-code question and it answers from the Code itself, citing the 
 ```
 $ codecite ask "What is the minimum height for a guardrail on a residential deck?"
 
-Guards must generally be not less than 1 070 mm high. However, exterior guards
-serving not more than one dwelling unit may be 900 mm high where the walking
-surface is not more than 1 800 mm above finished ground level. ...
+The minimum height for a guardrail on a residential deck is 900 mm according to
+Sentence 9.8.8.3.(2), which states that "All guards within dwelling units or
+within houses with a secondary suite including their common spaces shall be not
+less than 900 mm high." However, if the walking surface served by the guard is
+not more than 1 800 mm above the finished ground level, the minimum height is
+also 900 mm as per Sentence 9.8.8.3.(3). ...
 
 --- Citations ---
-  Division B, Article 9.8.8.3. (Height of Guards), PDF p. 844
+  Division B, Article 9.8.8.3. (Height of Guards (See Note A-9.8.8.3.)), PDF p. 844
+  Division B, Note A-9.8.8.1. (Required Guards), PDF p. 1343
 ```
 
 ## Why this exists
@@ -48,7 +52,7 @@ query ──► Embed v4 (search_query) ──► top-30 dense candidates
 - **Duplicate clause numbers are real.** Division A, B and C each have a Part 1, so "1.4.1.2." is ambiguous — every chunk is keyed by division + clause.
 - **Known limitation: tables.** Numeric table cells (span tables, snow-load tables) scramble under text extraction. Table *prose* (notes, conditions) survives and lands in the right chunk; cell-accurate table QA would need a layout-aware table extractor.
 
-## Eval: what does Rerank buy?
+## Eval: what does each stage actually buy?
 
 `eval/questions.jsonl` holds 30 hand-written question → answer → gold-clause triples, each verified against the extracted corpus (the answer's key quantity literally appears in the gold chunk). The harness retrieves the same 30 dense candidates per question and scores the ranking with and without Rerank — same pool, same k, so the delta is attributable to Rerank alone.
 
@@ -56,14 +60,19 @@ query ──► Embed v4 (search_query) ──► top-30 dense candidates
 python eval/run_eval.py
 ```
 
-| Metric | Embed only | Embed + Rerank |
-|---|---|---|
-| hit@1 | _run the eval_ | _run the eval_ |
-| hit@3 | _run the eval_ | _run the eval_ |
-| hit@5 | _run the eval_ | _run the eval_ |
-| MRR | _run the eval_ | _run the eval_ |
+Measured results (Embed v4 / Rerank 3.5, 30 questions):
 
-Results are written to `eval/results.md` with per-question ranks. (Numbers pending: the harness runs against a live index; see Quickstart.)
+| Metric | Embed only | + Rerank (header + body) | + Rerank (body only, ablation) |
+|---|---|---|---|
+| hit@1 | **60.0%** | 53.3% | 33.3% |
+| hit@3 | **90.0%** | 90.0% | 80.0% |
+| hit@5 | **93.3%** | 90.0% | 86.7% |
+| MRR | **0.760** | 0.709 | 0.579 |
+
+Two findings I did not expect when I built this:
+
+1. **The context headers are the workhorse.** Stripping the clause-path header from what Rerank reads costs 20 points of hit@1 (53.3% → 33.3%). Structure-aware chunking isn't a nicety here — it's most of the retrieval quality, for the reranker as much as for the embedder.
+2. **Rerank did not lift this pipeline — dense retrieval had already saturated it.** With headers in place, Embed v4 alone puts the gold clause at rank 1 for 60% of questions and in the top 3 for 90%; Rerank shuffles a few rank-1 hits down and a few rank-2 hits up, netting slightly negative. The honest conclusion: a second-stage reranker earns its keep when the first stage is weak or the candidate pool is noisy; over ~3,000 well-structured chunks with vocabulary-rich headers, first-stage retrieval left it little to fix. Per-question ranks are in [eval/results.md](eval/results.md).
 
 ## Quickstart
 

@@ -29,7 +29,11 @@ def main(argv: list[str] | None = None) -> int:
     from .cohere_client import CohereClient
     from .store import get_store
 
-    client = CohereClient()
+    try:
+        client = CohereClient()
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
+        return 2
     store = get_store(args.index)
 
     if args.command == "ingest":

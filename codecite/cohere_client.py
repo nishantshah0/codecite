@@ -14,8 +14,10 @@ EMBED_MODEL = os.environ.get("CODECITE_EMBED_MODEL", "embed-v4.0")
 RERANK_MODEL = os.environ.get("CODECITE_RERANK_MODEL", "rerank-v3.5")
 CHAT_MODEL = os.environ.get("CODECITE_CHAT_MODEL", "command-a-03-2025")
 
-# Cohere's embed endpoint accepts at most 96 texts per call.
-EMBED_BATCH = 96
+# Cohere's embed endpoint accepts at most 96 texts per call. Trial keys with
+# little remaining token-per-minute allowance may only accept smaller batches;
+# tune with CODECITE_EMBED_BATCH (ingest resumes from its checkpoint).
+EMBED_BATCH = min(96, int(os.environ.get("CODECITE_EMBED_BATCH", "96")))
 
 
 class CohereClient:
@@ -32,19 +34,21 @@ class CohereClient:
         self._co = cohere.ClientV2(api_key=key)
 
     def _with_retry(self, fn, *args, **kwargs):
-        """Retry on rate limits -- trial keys allow a limited number of calls/min."""
-        delay = 5.0
-        for attempt in range(6):
+        """Retry on rate limits -- trial keys throttle bursts, sometimes with
+        long penalty windows, so waits stretch to minutes before giving up."""
+        delay = 10.0
+        for attempt in range(10):
             try:
                 return fn(*args, **kwargs)
             except Exception as e:  # SDK raises TooManyRequestsError et al.
                 status = getattr(e, "status_code", None)
                 if status == 429 or "429" in str(e):
+                    print(f"  rate-limited (attempt {attempt + 1}/10), waiting {delay:.0f}s...", flush=True)
                     time.sleep(delay)
-                    delay = min(delay * 2, 65)
+                    delay = min(delay * 2, 180)
                     continue
                 raise
-        raise RuntimeError("Cohere API kept rate-limiting after 6 retries")
+        raise RuntimeError("Cohere API kept rate-limiting after 10 retries")
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []

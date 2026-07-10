@@ -8,9 +8,15 @@ eval harness measures exactly what this second stage buys.
 
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
 
 from .chunk import clauses_to_chunks, embed_text
+from .cohere_client import EMBED_BATCH
 from .extract import extract_pages
 from .parse import parse_pages
 
@@ -34,9 +40,28 @@ def ingest(client, store, pdf_path: str) -> int:
     pages = extract_pages(pdf_path)
     clauses = parse_pages(pages)
     chunks = clauses_to_chunks(clauses)
-    print(f"parsed {len(clauses)} clauses -> {len(chunks)} chunks; embedding...")
-    embeddings = client.embed_documents([embed_text(c) for c in chunks])
+    print(f"parsed {len(clauses)} clauses -> {len(chunks)} chunks; embedding...", flush=True)
+
+    # Embedding a full corpus on a trial key can die mid-run to rate limits,
+    # so progress is checkpointed after every batch and resumed on rerun.
+    texts = [embed_text(c) for c in chunks]
+    ckpt = Path(pdf_path).parent / ".embed_checkpoint.npz"
+    embeddings: list = []
+    if ckpt.exists():
+        data = np.load(ckpt)
+        if int(data["n_chunks"]) == len(texts):
+            embeddings = list(data["embeddings"])
+            print(f"resuming from checkpoint: {len(embeddings)}/{len(texts)} already embedded", flush=True)
+    pace = float(os.environ.get("CODECITE_EMBED_PACE", "2"))
+    while len(embeddings) < len(texts):
+        batch = texts[len(embeddings) : len(embeddings) + EMBED_BATCH]
+        embeddings.extend(client.embed_documents(batch))
+        np.savez(ckpt, embeddings=np.asarray(embeddings, dtype=np.float32), n_chunks=len(texts))
+        print(f"  embedded {len(embeddings)}/{len(texts)}", flush=True)
+        time.sleep(pace)
+
     store.save(chunks, embeddings)
+    ckpt.unlink(missing_ok=True)
     return len(chunks)
 
 

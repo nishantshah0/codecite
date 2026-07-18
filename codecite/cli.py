@@ -2,6 +2,7 @@
 
     codecite ingest [--pdf data/nbc2020.pdf] [--index index]
     codecite ask "minimum guardrail height for a deck?" [--no-rerank]
+    codecite serve [--port 8000]
 """
 
 from __future__ import annotations
@@ -24,6 +25,11 @@ def main(argv: list[str] | None = None) -> int:
     p_ask.add_argument("--no-rerank", action="store_true", help="skip the Rerank stage")
     p_ask.add_argument("--show-hits", action="store_true", help="print retrieved chunks")
 
+    p_serve = sub.add_parser("serve", help="run the web UI and JSON API")
+    p_serve.add_argument("--index", default="index")
+    p_serve.add_argument("--host", default="127.0.0.1")
+    p_serve.add_argument("--port", type=int, default=8000)
+
     args = parser.parse_args(argv)
 
     from .cohere_client import CohereClient
@@ -41,6 +47,22 @@ def main(argv: list[str] | None = None) -> int:
 
         n = ingest(client, store, args.pdf)
         print(f"indexed {n} chunks")
+        return 0
+
+    if args.command == "serve":
+        try:
+            import uvicorn
+
+            from .server import create_app
+        except ImportError:
+            print("The web UI needs the [web] extra:  pip install -e .[web]", file=sys.stderr)
+            return 2
+        try:
+            app = create_app(client, store)
+        except RuntimeError as e:
+            print(e, file=sys.stderr)
+            return 2
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     from .pipeline import answer

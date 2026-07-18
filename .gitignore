@@ -10,3 +10,5 @@ __pycache__/
 .pytest_cache/
 .env
 eval/results_raw.json
+node_modules/
+web/dist/

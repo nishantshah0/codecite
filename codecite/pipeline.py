@@ -28,12 +28,36 @@ RERANK_K = 8
 class Hit:
     chunk: dict
     score: float
+    # Where dense retrieval alone ranked this chunk (0-based) and with what
+    # cosine similarity -- carried through Rerank so the stages can be compared.
+    dense_rank: int | None = None
+    dense_score: float | None = None
 
     @property
     def label(self) -> str:
         c = self.chunk
         kind = "Note" if c["kind"] == "note" else "Article"
         return f"Division {c['division']}, {kind} {c['clause_id']} ({c['title']}), PDF p. {c['page']}"
+
+
+@dataclass
+class Citation:
+    """A span of the answer text mapped to the hits that support it."""
+
+    text: str
+    start: int | None
+    end: int | None
+    sources: list[int]  # indices into AskResult.hits
+
+
+@dataclass
+class AskResult:
+    text: str
+    citations: list[Citation]
+    hits: list[Hit]
+    timings: dict[str, float]  # seconds per stage: embed, search, rerank, generate
+    corpus_size: int
+    retrieved: int  # dense candidates actually found (min of RETRIEVE_K, corpus)
 
 
 def ingest(client, store, pdf_path: str) -> int:
@@ -80,14 +104,38 @@ def rerank(client, query: str, hits: list[Hit], top_n: int = RERANK_K) -> list[H
     return [Hit(hits[i].chunk, score) for i, score in ranked]
 
 
-def answer(client, store, query: str, use_rerank: bool = True):
-    """Full pipeline. Returns (answer_text, citations, hits).
+def ask(client, store, query: str, use_rerank: bool = True, chunks: list[dict] | None = None) -> AskResult:
+    """Full pipeline with per-stage timings and span-level citations.
 
-    citations is a list of (quoted_span, [chunk labels]) pairs taken from the
-    model's citation output, so every claim maps back to specific clauses.
+    Stages are run inline (rather than via retrieve()/rerank()) so that embed,
+    search, rerank and generate can each be timed on their own -- the web UI
+    shows the trace. Pass preloaded chunks to skip re-reading the index.
     """
-    hits = retrieve(client, store, query)
-    hits = rerank(client, query, hits) if use_rerank else hits[:RERANK_K]
+    timings: dict[str, float] = {}
+    if chunks is None:
+        chunks = store.load_chunks()
+
+    t0 = time.perf_counter()
+    q = client.embed_query(query)
+    timings["embed"] = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    dense = [
+        Hit(chunks[i], score, dense_rank=rank, dense_score=score)
+        for rank, (i, score) in enumerate(store.search(q, top_k=RETRIEVE_K))
+    ]
+    timings["search"] = time.perf_counter() - t0
+
+    if use_rerank:
+        t0 = time.perf_counter()
+        docs = [embed_text(h.chunk) for h in dense]
+        hits = [
+            Hit(dense[i].chunk, score, dense_rank=dense[i].dense_rank, dense_score=dense[i].dense_score)
+            for i, score in client.rerank(query, docs, top_n=RERANK_K)
+        ]
+        timings["rerank"] = time.perf_counter() - t0
+    else:
+        hits = dense[:RERANK_K]
 
     documents = [
         {
@@ -107,15 +155,42 @@ def answer(client, store, query: str, use_rerank: bool = True):
         "be quoted exactly as written in the Code. If the excerpts do not "
         f"answer the question, say so.\n\nQuestion: {query}"
     )
+    t0 = time.perf_counter()
     resp = client.chat_with_documents(message, documents)
+    timings["generate"] = time.perf_counter() - t0
 
     text = "".join(part.text for part in resp.message.content if getattr(part, "text", None))
     citations = []
     for cit in resp.message.citations or []:
-        labels = []
+        sources = []
         for src in cit.sources or []:
             idx = int(src.id)
             if 0 <= idx < len(hits):
-                labels.append(hits[idx].label)
-        citations.append((cit.text, labels))
-    return text, citations, hits
+                sources.append(idx)
+        citations.append(
+            Citation(
+                text=cit.text,
+                start=getattr(cit, "start", None),
+                end=getattr(cit, "end", None),
+                sources=sources,
+            )
+        )
+    return AskResult(
+        text=text,
+        citations=citations,
+        hits=hits,
+        timings=timings,
+        corpus_size=len(chunks),
+        retrieved=len(dense),
+    )
+
+
+def answer(client, store, query: str, use_rerank: bool = True):
+    """CLI-shaped pipeline output: (answer_text, citations, hits).
+
+    citations is a list of (quoted_span, [chunk labels]) pairs taken from the
+    model's citation output, so every claim maps back to specific clauses.
+    """
+    result = ask(client, store, query, use_rerank=use_rerank)
+    citations = [(c.text, [result.hits[i].label for i in c.sources]) for c in result.citations]
+    return result.text, citations, result.hits

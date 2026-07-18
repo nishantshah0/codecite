@@ -19,6 +19,15 @@ also 900 mm as per Sentence 9.8.8.3.(3). ...
   Division B, Note A-9.8.8.1. (Required Guards), PDF p. 1343
 ```
 
+The same pipeline drives a web UI (`codecite serve`) where the citations become clickable highlights tied to their source clauses and every pipeline stage reports its latency:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/web-dark.png">
+  <img alt="CodeCite web UI: a clause-cited answer, retrieved sources with rerank movement, and per-stage pipeline timings" src="docs/web-light.png">
+</picture>
+
+<sub>Screenshots show the synthetic dev-fixture corpus; a real index answers from all ~3,000 NBC clauses.</sub>
+
 ## Why this exists
 
 Building codes are exactly the kind of document RAG is hard on: 1,500 pages, deeply nested legal numbering (Division B → Part 9 → Section 9.8 → Subsection 9.8.8 → Article 9.8.8.3 → Sentence (2)), two-column typesetting, cross-references everywhere, and answers that must be *exact* — "not less than 1 070 mm" is a legal requirement, not a vibe. As a civil engineering student I wanted the reference tool I wish existed, and it doubles as a testbed for measuring what each stage of a retrieval pipeline actually contributes.
@@ -42,6 +51,9 @@ query ──► Embed v4 (search_query) ──► top-30 dense candidates
                  ──► Cohere Rerank 3.5 ──► top-8
                  ──► Command A with documents= ──► answer + span-level citations
                        mapped back to clause IDs and PDF pages
+
+served two ways: `codecite ask` (CLI) and `codecite serve` (FastAPI JSON API
+                 hosting the React/TypeScript UI in web/)
 ```
 
 ### Design decisions worth discussing
@@ -74,6 +86,22 @@ Two findings I did not expect when I built this:
 1. **The context headers are the workhorse.** Stripping the clause-path header from what Rerank reads costs 20 points of hit@1 (53.3% → 33.3%). Structure-aware chunking isn't a nicety here — it's most of the retrieval quality, for the reranker as much as for the embedder.
 2. **Rerank did not lift this pipeline — dense retrieval had already saturated it.** With headers in place, Embed v4 alone puts the gold clause at rank 1 for 60% of questions and in the top 3 for 90%; Rerank shuffles a few rank-1 hits down and a few rank-2 hits up, netting slightly negative. The honest conclusion: a second-stage reranker earns its keep when the first stage is weak or the candidate pool is noisy; over ~3,000 well-structured chunks with vocabulary-rich headers, first-stage retrieval left it little to fix. Per-question ranks are in [eval/results.md](eval/results.md).
 
+## Web UI
+
+`codecite serve` hosts a React + TypeScript front end (Vite, no UI framework) over the same pipeline:
+
+- **Citations you can touch.** Span-level citations render as highlighted spans in the answer; clicking one scrolls to the supporting clause, and each source card highlights back every statement it supports.
+- **The pipeline is legible.** Embed → retrieve → rerank → generate as a live trace with per-stage latency and model names, plus a Rerank toggle — the eval table's ablation, interactive.
+- **Rank movement.** Each source shows where dense retrieval ranked it versus where Rerank placed it (`↑3`, `↓1`, `=`), so you can watch the second stage earn (or not earn) its keep.
+
+```bash
+pip install -e .[web]
+cd web && npm install && npm run build && cd ..
+codecite serve                    # http://127.0.0.1:8000
+```
+
+For frontend work without an API key or index, `python scripts/dev_server.py` runs the real API over a small synthetic fixture corpus (paraphrased placeholder text, not the Code), and `cd web && npm run dev` proxies to it with hot reload.
+
 ## Quickstart
 
 ```bash
@@ -102,7 +130,7 @@ Optional Postgres/pgvector backend (e.g. Supabase): `pip install -e .[pg]` and s
 
 ## Tests
 
-`pytest` runs fully offline: extraction is tested against synthetic two-column PDFs generated in-test, the parser against constructed page text covering every filtering rule above, and the retrieve→rerank→generate pipeline against a fake Cohere client — plus integrity checks on the eval set. CI runs on every push.
+`pytest` runs fully offline: extraction is tested against synthetic two-column PDFs generated in-test, the parser against constructed page text covering every filtering rule above, and the retrieve→rerank→generate pipeline against a fake Cohere client — plus integrity checks on the eval set and the JSON API exercised through FastAPI's test client. The frontend's citation-span segmentation (offsets, fallback search, overlap handling) is covered by Vitest in `web/`. CI runs both suites on every push.
 
 ## Legal
 

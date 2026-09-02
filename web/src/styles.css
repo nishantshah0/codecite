@@ -526,6 +526,13 @@ code {
   margin-top: 2px;
 }
 
+.notice-info {
+  border-left-color: var(--navy);
+}
+.notice-info svg {
+  color: var(--navy);
+}
+
 .notice-title {
   font-weight: 600;
   font-size: 14.5px;

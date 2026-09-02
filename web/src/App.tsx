@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { fetchAnswer, fetchHealth } from './api'
+import { DEMO, fetchAnswer, fetchHealth } from './api'
 import type { AskResponse, Health } from './api'
 import { Answer } from './components/Answer'
 import { AskPanel } from './components/AskPanel'
@@ -8,7 +8,7 @@ import { Footer } from './components/Footer'
 import { Header } from './components/Header'
 import { PipelineTrace } from './components/PipelineTrace'
 import { SourceCard } from './components/SourceCard'
-import { AlertIcon } from './icons'
+import { AlertIcon, InfoIcon } from './icons'
 import { formatCount } from './lib/format'
 
 type Theme = 'light' | 'dark'
@@ -65,6 +65,21 @@ export default function App() {
 
       <main className="main">
         <AskPanel loading={loading} useRerank={useRerank} onToggleRerank={setUseRerank} onAsk={ask} />
+
+        {DEMO && (
+          <div className="notice notice-info" role="status">
+            <InfoIcon width={18} height={18} />
+            <div>
+              <p className="notice-title">Static demo.</p>
+              <p className="notice-body">
+                This page has no backend: answers are pre-recorded from a synthetic fixture corpus of ten paraphrased
+                clauses, not the Code. Questions about guards, stairs, smoke alarms or ceilings match a recorded
+                answer, and the Rerank toggle switches between recorded runs. For real answers over all ~3,000 NBC
+                clauses, run <code>codecite serve</code> locally.
+              </p>
+            </div>
+          </div>
+        )}
 
         {healthError && (
           <div className="notice" role="alert">

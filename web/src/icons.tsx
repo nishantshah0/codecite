@@ -59,6 +59,13 @@ export const RankDownIcon = (props: IconProps) => (
   </svg>
 )
 
+export const InfoIcon = (props: IconProps) => (
+  <svg {...base(props)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5M12 8v.5" />
+  </svg>
+)
+
 export const AlertIcon = (props: IconProps) => (
   <svg {...base(props)}>
     <path d="M12 3.5 2.5 20h19L12 3.5ZM12 10v4.5M12 17.5v.5" />

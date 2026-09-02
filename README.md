@@ -102,6 +102,12 @@ codecite serve                    # http://127.0.0.1:8000
 
 For frontend work without an API key or index, `python scripts/dev_server.py` runs the real API over a small synthetic fixture corpus (paraphrased placeholder text, not the Code), and `cd web && npm run dev` proxies to it with hot reload.
 
+### Hosted demo
+
+A static build of the UI is published to GitHub Pages at **https://nishantshah0.github.io/codecite/** by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main`. Pages cannot run the FastAPI backend (and the Code text is not redistributable), so the workflow builds with `VITE_DEMO=1`: `scripts/export_demo.py` records the fixture API's responses — the same synthetic corpus the dev server uses, with and without Rerank — into `web/public/demo/`, and the demo build answers from those snapshots instead of `/api`. It shows the citation UI, rank movement and pipeline trace; it does not answer from the Code.
+
+To host the UI statically against a real, separately deployed API, build with `VITE_API_BASE=https://your-api.example.com` (the API would also need CORS enabled for the Pages origin). `VITE_BASE_PATH` sets the public path when serving under a sub-path.
+
 ## Quickstart
 
 ```bash
